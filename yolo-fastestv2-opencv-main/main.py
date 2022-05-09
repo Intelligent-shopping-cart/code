@@ -111,15 +111,13 @@ class yolo_fast_v2():
 
 
 def boxdistance(box):
-    distance = 1
-    if len(box) >= 2:
-        box1 = box[0]
-        box2 = box[1]
-        mid_point1_x = (box1[0] + box1[2]) / 2
-        mid_point1_y = (box1[1] + box1[3]) / 2
-        mid_point2_x = (box2[0] + box2[2]) / 2
-        mid_point2_y = (box2[1] + box2[3]) / 2
-        distance = math.sqrt(math.pow((mid_point2_x-mid_point1_x), 2)+math.pow((mid_point2_y-mid_point1_y), 2))
+    box1 = box[0]
+    box2 = box[1]
+    mid_point1_x = (box1[0] + box1[2]) / 2
+    mid_point1_y = (box1[1] + box1[3]) / 2
+    mid_point2_x = (box2[0] + box2[2]) / 2
+    mid_point2_y = (box2[1] + box2[3]) / 2
+    distance = math.sqrt(math.pow((mid_point2_x-mid_point1_x), 2)+math.pow((mid_point2_y-mid_point1_y), 2))
     return distance
 
 
@@ -128,11 +126,12 @@ def yolodect(srcimg, roi):
     srcimg, boxs = model.postprocess(srcimg, outputs)
 
     if len(boxs) == 0:
-        return srcimg, None,1
+        return srcimg, None, 1, 0
     matched = matchbox(boxs, roi)
-    distance = boxdistance(boxs)
-    # print(distance)
-    return srcimg, matched, distance
+    if len(boxs) == 2:
+        distance = boxdistance(boxs)
+        return srcimg, matched, distance, len(boxs)
+    return srcimg, matched, 1, len(boxs)
 
 
 def matchbox(boxs, mroi):
@@ -162,6 +161,7 @@ if __name__ == '__main__':
     tracker = Tracker()
     miss = False
     dis_list = []
+    num_box_list = []
     while ret:
         ret, srcimg = cap.read()
         srcimg = cv2.resize(srcimg, (640, 480))
@@ -180,18 +180,22 @@ if __name__ == '__main__':
         #     miss = False
         #     # tracker.init(srcimg, match)
         if (inum + 1) % 1 == 0:
-            srcimg, match, distance = yolodect(srcimg, roi)
-            if inum % 3 == 0:
+            srcimg, match, distance, num_box = yolodect(srcimg, roi)
+            if inum % 1 == 0:
                 dis_list.append(distance)
-                if len(dis_list) == 8:
-                    # print(dis_list)
+                num_box_list.append(num_box)
+                if len(dis_list) == 5:
+                    print(num_box_list)
                     total = 0
                     for ele in range(0, len(dis_list)):
                         total = total + dis_list[ele]
-                    if 20 < total < 100:
-                        roi = cv2.selectROI("1", srcimg, False, False)
-                        tracker.init(srcimg, roi)
+                    print(total)
+                    for i in range(0, 4):
+                        if num_box_list[i+1] == num_box_list[i] - 1 and 10 < total < 40:
+                            roi = cv2.selectROI("1", srcimg, False, False)
+                            tracker.init(srcimg, roi)
                     dis_list = []
+                    num_box_list = []
             # if match==None:
             # miss=True
             # if miss==True:
@@ -205,7 +209,7 @@ if __name__ == '__main__':
 
         e = time.time()
         # cv2.putText(srcimg, 'fps:{}'.format(int(1 / (e - s))), (5, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-        # print(srcimg.shape)
+        print(srcimg.shape)
         cv2.imshow('1', srcimg)
         out.write(srcimg)
         c = cv2.waitKey(1)
