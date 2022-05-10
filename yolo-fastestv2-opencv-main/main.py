@@ -117,7 +117,7 @@ def boxdistance(box):
     mid_point1_y = (box1[1] + box1[3]) / 2
     mid_point2_x = (box2[0] + box2[2]) / 2
     mid_point2_y = (box2[1] + box2[3]) / 2
-    distance = math.sqrt(math.pow((mid_point2_x-mid_point1_x), 2)+math.pow((mid_point2_y-mid_point1_y), 2))
+    distance = math.sqrt(math.pow((mid_point2_x - mid_point1_x), 2) + math.pow((mid_point2_y - mid_point1_y), 2))
     return distance
 
 
@@ -148,7 +148,7 @@ def matchbox(boxs, mroi):
     return boxs[matchindex]
 
 
-def overlap(dis_list,nbox_list,high):
+def overlap(dis_list, nbox_list, high):
     '''
     判断目标是否重叠
     :param dis_list: 存储bbox距离的list
@@ -156,22 +156,30 @@ def overlap(dis_list,nbox_list,high):
     :param high:距离上限阈值
     :return: dis_list,nbox_list
     '''
-    if len(dis_list) == 5:
-        total = 0
-        for ele in range(0, len(dis_list)):
-            total = total + dis_list[ele]
+    if len(dis_list) == 6:
+        print(nbox_list)
+        print(dis_list)
         for i in range(0, 4):
-            if nbox_list[i + 1] == nbox_list[i] - 1 and 10 < total < high:
+            if nbox_list[i + 1] == nbox_list[i] - 1 and 1 < dis_list[i] < high:
                 roi = cv2.selectROI("1", srcimg, False, False)
-        dis_list = []
-        nbox_list = []
-        return dis_list,nbox_list
+
+        if nbox_list[-1] >= 2:
+            nbox_list = []
+            dis_list = []
+            nbox_list.append(2)
+            dis_list.append(high)
+        else:
+            nbox_list = []
+            dis_list = []
+        return dis_list, nbox_list
     else:
-        return dis_list,nbox_list
+        return dis_list, nbox_list
+
+
 if __name__ == '__main__':
     import time
 
-    cap = cv2.VideoCapture(r'outside.mp4')
+    cap = cv2.VideoCapture(r'crossman3.mp4')
     ret, srcimg = cap.read()
     model = yolo_fast_v2(objThreshold=0.3, confThreshold=0.3, nmsThreshold=0.4)
     tracker = Tracker()
@@ -196,11 +204,12 @@ if __name__ == '__main__':
         #     # tracker.init(srcimg, match)
         if (inum + 1) % 1 == 0:
             srcimg, match, distance, num_box = yolodect(srcimg, roi)
-            if inum % 3 == 0:
+            if inum % 2 == 0:
                 dis_list.append(distance)
                 num_box_list.append(num_box)
 
-                dis_list,num_box_list=overlap(dis_list,num_box_list,40)
+                dis_list, num_box_list = overlap(dis_list, num_box_list, 35)
+
             # if match==None:
             # miss=True
             # if miss==True:
@@ -209,8 +218,8 @@ if __name__ == '__main__':
             # else:
             # tracker.init(srcimg,match)
         # else:
-            # x, y, w, h = tracker.update(srcimg)
-            # cv2.rectangle(srcimg, (x, y), (x + w, y + h), (0,255, 0), 2)
+        # x, y, w, h = tracker.update(srcimg)
+        # cv2.rectangle(srcimg, (x, y), (x + w, y + h), (0,255, 0), 2)
 
         e = time.time()
         # cv2.putText(srcimg, 'fps:{}'.format(int(1 / (e - s))), (5, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
