@@ -148,16 +148,32 @@ def matchbox(boxs, mroi):
     return boxs[matchindex]
 
 
+def overlap(dis_list,nbox_list,high):
+    '''
+    判断目标是否重叠
+    :param dis_list: 存储bbox距离的list
+    :param nbox_list: 存储bbox数量的list
+    :param high:距离上限阈值
+    :return: dis_list,nbox_list
+    '''
+    if len(dis_list) == 5:
+        total = 0
+        for ele in range(0, len(dis_list)):
+            total = total + dis_list[ele]
+        for i in range(0, 4):
+            if nbox_list[i + 1] == nbox_list[i] - 1 and 10 < total < high:
+                roi = cv2.selectROI("1", srcimg, False, False)
+        dis_list = []
+        nbox_list = []
+        return dis_list,nbox_list
+    else:
+        return dis_list,nbox_list
 if __name__ == '__main__':
     import time
-    from kalmanfilter import KalmanFilter
 
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # 保存视频的编码
-    out = cv2.VideoWriter('output1.MP4', fourcc, 30.0, (480, 640))  # 保存的格式
-    cap = cv2.VideoCapture(r'crossman3.mp4')
+    cap = cv2.VideoCapture(r'outside.mp4')
     ret, srcimg = cap.read()
     model = yolo_fast_v2(objThreshold=0.3, confThreshold=0.3, nmsThreshold=0.4)
-
     tracker = Tracker()
     miss = False
     dis_list = []
@@ -166,7 +182,6 @@ if __name__ == '__main__':
         ret, srcimg = cap.read()
         srcimg = cv2.resize(srcimg, (640, 480))
         s = time.time()
-
         inum = cap.get(1)
         if inum == 2:
             # 初始化kcf tracker
@@ -181,21 +196,11 @@ if __name__ == '__main__':
         #     # tracker.init(srcimg, match)
         if (inum + 1) % 1 == 0:
             srcimg, match, distance, num_box = yolodect(srcimg, roi)
-            if inum % 1 == 0:
+            if inum % 3 == 0:
                 dis_list.append(distance)
                 num_box_list.append(num_box)
-                if len(dis_list) == 5:
-                    print(num_box_list)
-                    total = 0
-                    for ele in range(0, len(dis_list)):
-                        total = total + dis_list[ele]
-                    print(total)
-                    for i in range(0, 4):
-                        if num_box_list[i+1] == num_box_list[i] - 1 and 10 < total < 40:
-                            roi = cv2.selectROI("1", srcimg, False, False)
-                            tracker.init(srcimg, roi)
-                    dis_list = []
-                    num_box_list = []
+
+                dis_list,num_box_list=overlap(dis_list,num_box_list,40)
             # if match==None:
             # miss=True
             # if miss==True:
@@ -209,19 +214,5 @@ if __name__ == '__main__':
 
         e = time.time()
         # cv2.putText(srcimg, 'fps:{}'.format(int(1 / (e - s))), (5, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-        print(srcimg.shape)
         cv2.imshow('1', srcimg)
-        out.write(srcimg)
         c = cv2.waitKey(1)
-        # if cross:
-        #     roi = cv2.selectROI("1", srcimg, False, False)
-        #     tracker.init(srcimg, roi)
-
-        c = cv2.waitKey(10) & 0xFF
-        if c == 27 or c == ord('s'):
-            roi = cv2.selectROI("1", srcimg, False, False)
-            tracker.init(srcimg, roi)
-
-
-
-
