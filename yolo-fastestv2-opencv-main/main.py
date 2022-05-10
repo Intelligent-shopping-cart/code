@@ -3,7 +3,7 @@ import cv2
 import numpy as np
 import onnxruntime
 from kcf import Tracker
-
+from phash import pHash,cmpHash
 
 class yolo_fast_v2():
     def __init__(self, objThreshold=0.3, confThreshold=0.3, nmsThreshold=0.4):
@@ -80,7 +80,7 @@ class yolo_fast_v2():
         # Display the label at the top of the bounding box
         labelSize, baseLine = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
         top = max(top, labelSize[1])
-        cv2.putText(frame, label, (left, top - 10), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), thickness=1)
+        #cv2.putText(frame, label, (left, top - 10), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), thickness=1)
         return frame
 
     def detect(self, srcimg):
@@ -117,7 +117,7 @@ def boxdistance(box):
     mid_point1_y = (box1[1] + box1[3]) / 2
     mid_point2_x = (box2[0] + box2[2]) / 2
     mid_point2_y = (box2[1] + box2[3]) / 2
-    distance = math.sqrt(math.pow((mid_point2_x - mid_point1_x), 2) + math.pow((mid_point2_y - mid_point1_y), 2))
+    distance = math.sqrt(math.pow((mid_point2_x-mid_point1_x), 2)+math.pow((mid_point2_y-mid_point1_y), 2))
     return distance
 
 
@@ -130,8 +130,8 @@ def yolodect(srcimg, roi):
     matched = matchbox(boxs, roi)
     if len(boxs) == 2:
         distance = boxdistance(boxs)
-        return srcimg, matched, distance, len(boxs)
-    return srcimg, matched, 1, len(boxs)
+        return srcimg, matched, distance, len(boxs),boxs
+    return srcimg, matched, 1, len(boxs),boxs   #boxs is added by JLH in 5.10 use for match person
 
 
 def matchbox(boxs, mroi):
@@ -148,6 +148,37 @@ def matchbox(boxs, mroi):
     return boxs[matchindex]
 
 
+def PCB(img):
+    h,w=img.shape[:2]
+    header = h / 7
+    part1 = h * 4 / 7
+    p1=img[int(header):int(part1),:]
+    p2=img[int(part1):h, :]
+    return p1,p2
+def sim(p1,p2,ip1,ip2):
+    p1=pHash(p1)
+    p2=pHash(p2)
+    sim=cmpHash(p1, ip1)*0.6+0.4*cmpHash(p2,ip2)
+    return  sim
+
+def matchperson(roi,img1,imgmatching):
+    simlist=[]
+    imgmatching=cv2.GaussianBlur(imgmatching, (5, 5), 3)
+    ip1,ip2=PCB(imgmatching)
+    ip1=pHash(ip1)
+    ip2=pHash(ip2)
+    for i in roi:
+        if i[2]*i[3]<2048: #过滤面积较小的roi
+            simlist.append(100)
+            continue
+        p=img1[i[1]:i[1]+i[3],i[0]:i[0]+i[2]]
+        p = cv2.GaussianBlur(p, (5, 5), 3)
+        p1,p2=PCB(p)
+        s=sim(p1,p2,ip1,ip2)
+        #cv2.imshow('2',p)
+        #cv2.waitKey(0)
+        simlist.append(s)
+    return np.argmin(simlist)
 def overlap(dis_list, nbox_list, high):
     '''
     判断目标是否重叠
@@ -157,12 +188,9 @@ def overlap(dis_list, nbox_list, high):
     :return: dis_list,nbox_list
     '''
     if len(dis_list) == 6:
-        print(nbox_list)
-        print(dis_list)
         for i in range(0, 4):
             if nbox_list[i + 1] == nbox_list[i] - 1 and 1 < dis_list[i] < high:
                 roi = cv2.selectROI("1", srcimg, False, False)
-
         if nbox_list[-1] >= 2:
             nbox_list = []
             dis_list = []
@@ -174,54 +202,38 @@ def overlap(dis_list, nbox_list, high):
         return dis_list, nbox_list
     else:
         return dis_list, nbox_list
-
-
 if __name__ == '__main__':
     import time
 
-    cap = cv2.VideoCapture(r'crossman3.mp4')
+    cap = cv2.VideoCapture(r'./data/outside1.mp4')
     ret, srcimg = cap.read()
     model = yolo_fast_v2(objThreshold=0.3, confThreshold=0.3, nmsThreshold=0.4)
     tracker = Tracker()
     miss = False
     dis_list = []
     num_box_list = []
+    tmpimg=np.zeros_like(srcimg)
     while ret:
         ret, srcimg = cap.read()
         srcimg = cv2.resize(srcimg, (640, 480))
         s = time.time()
         inum = cap.get(1)
         if inum == 2:
-            # 初始化kcf tracker
+            # 初始化kcf tracker 和匹配对象
             roi = cv2.selectROI("1", srcimg, False, False)
             tracker.init(srcimg, roi)
-        # if miss == True:
-        #     srcimg, match = yolodect(srcimg, roi)
-        #     if match == None:
-        #         miss = True
-        #         continue
-        #     miss = False
-        #     # tracker.init(srcimg, match)
+            tmpimg=srcimg[roi[1]:roi[1]+roi[3],roi[0]:roi[0]+roi[2]]
         if (inum + 1) % 1 == 0:
-            srcimg, match, distance, num_box = yolodect(srcimg, roi)
-            if inum % 2 == 0:
+            srcimg, match, distance, num_box,boxs = yolodect(srcimg, roi)
+            boxindex=matchperson(boxs,srcimg,tmpimg)
+            tmpimg=srcimg[boxs[boxindex][1]:boxs[boxindex][1]+boxs[boxindex][3],boxs[boxindex][0]:boxs[boxindex][0]+boxs[boxindex][2]]
+            cv2.rectangle(srcimg,(boxs[boxindex][0],boxs[boxindex][1]),(boxs[boxindex][0]+boxs[boxindex][2],boxs[boxindex][1]+boxs[boxindex][3]),(255,255,0),3)
+            if inum % 1== 0:
                 dis_list.append(distance)
                 num_box_list.append(num_box)
-
-                dis_list, num_box_list = overlap(dis_list, num_box_list, 35)
-
-            # if match==None:
-            # miss=True
-            # if miss==True:
-            # x, y, w, h = tracker.update(srcimg)
-            # cv2.rectangle(srcimg, (x, y), (x + w, y + h), (0, 255, 0), 2)
-            # else:
-            # tracker.init(srcimg,match)
-        # else:
-        # x, y, w, h = tracker.update(srcimg)
-        # cv2.rectangle(srcimg, (x, y), (x + w, y + h), (0,255, 0), 2)
+                dis_list,num_box_list=overlap(dis_list,num_box_list,35)
 
         e = time.time()
-        # cv2.putText(srcimg, 'fps:{}'.format(int(1 / (e - s))), (5, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+        cv2.putText(srcimg, 'fps:{}'.format(int(1 / (e - s))), (5, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
         cv2.imshow('1', srcimg)
         c = cv2.waitKey(1)
