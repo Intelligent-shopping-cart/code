@@ -17,7 +17,7 @@ class yolo_fast_v2():
             dtype=np.float32).reshape(len(self.stride), self.anchor_num, 2)
         self.inpWidth = 352
         self.inpHeight = 352
-        self.net = onnxruntime.InferenceSession('model.onnx', providers=['CUDAExecutionProvider'])
+        self.net = onnxruntime.InferenceSession('model.onnx', providers=['CPUExecutionProvider'])
         self.confThreshold = confThreshold
         self.nmsThreshold = nmsThreshold
         self.objThreshold = objThreshold
@@ -126,7 +126,7 @@ def yolodect(srcimg, roi):
     srcimg, boxs = model.postprocess(srcimg, outputs)
 
     if len(boxs) == 0:
-        return srcimg, None, 1, 0
+        return srcimg, None, 1, 0,boxs
     matched = matchbox(boxs, roi)
     if len(boxs) == 2:
         distance = boxdistance(boxs)
@@ -149,6 +149,11 @@ def matchbox(boxs, mroi):
 
 
 def PCB(img):
+    '''
+    将行人分为上班身和下半身，同时砍除了头部
+    :param img: 行人roi
+    :return: 上半身roi，下半身roi
+    '''
     h,w=img.shape[:2]
     header = h / 7
     part1 = h * 4 / 7
@@ -156,30 +161,58 @@ def PCB(img):
     p2=img[int(part1):h, :]
     return p1,p2
 def sim(p1,p2,ip1,ip2):
+    '''
+    计算行人相似度
+    :param p1:当前行人的上半身
+    :param p2:当前行人的下半身
+    :param ip1:待匹配行人的下半身
+    :param ip2:待匹配行人的下半身
+    :return:相似度，越小越相似
+    '''
     p1=pHash(p1)
     p2=pHash(p2)
-    sim=cmpHash(p1, ip1)*0.6+0.4*cmpHash(p2,ip2)
+    sim=cmpHash(p1, ip1)*0.7+0.3*cmpHash(p2,ip2)
     return  sim
 
-def matchperson(roi,img1,imgmatching):
+def matchperson(roi,img1,imgmatching,pos,cross):
+    '''
+    匹配行人
+
+    '''
+
     simlist=[]
-    imgmatching=cv2.GaussianBlur(imgmatching, (5, 5), 3)
+    '''if cross==0:
+        for i in roi:
+            if i[2] * i[3] < 2048:  # 过滤面积较小的roi
+                simlist.append(1000)
+                continue
+            dis = math.sqrt(
+                math.pow((pos[0] + pos[2] / 2 - i[0] - i[2] / 2), 2) + math.pow((pos[1] + pos[3] / 2 - i[1] - i[3] / 2),
+                                                                                2))
+            simlist.append(dis)
+        return np.argmin(simlist)'''
+    #imgmatching=cv2.GaussianBlur(imgmatching, (5, 5), 3)
     ip1,ip2=PCB(imgmatching)
     ip1=pHash(ip1)
     ip2=pHash(ip2)
     for i in roi:
         if i[2]*i[3]<2048: #过滤面积较小的roi
-            simlist.append(100)
+            simlist.append(1000)
             continue
         p=img1[i[1]:i[1]+i[3],i[0]:i[0]+i[2]]
-        p = cv2.GaussianBlur(p, (5, 5), 3)
+
+        p = cv2.GaussianBlur(p, (7, 7), 3)
         p1,p2=PCB(p)
-        s=sim(p1,p2,ip1,ip2)
+        dis=math.sqrt(math.pow((pos[0]+pos[2]/2-i[0]-i[2]/2), 2)+math.pow((pos[1]+pos[3]/2-i[1]-i[3]/2), 2))
+        if cross!=0:
+            s=sim(p1,p2,ip1,ip2)+dis*0.03
+        else:
+            s=dis
         #cv2.imshow('2',p)
         #cv2.waitKey(0)
         simlist.append(s)
     return np.argmin(simlist)
-def overlap(dis_list, nbox_list, high):
+def overlap(dis_list, nbox_list, high,cross):
     '''
     判断目标是否重叠
     :param dis_list: 存储bbox距离的list
@@ -187,21 +220,29 @@ def overlap(dis_list, nbox_list, high):
     :param high:距离上限阈值
     :return: dis_list,nbox_list
     '''
+    if cross == 1:
+        if nbox_list[-1] != 1:
+            cross=0
     if len(dis_list) == 6:
         for i in range(0, 4):
+            if nbox_list[i] == 2 and 30 < dis_list[i] < 40:
+                cross=2
             if nbox_list[i + 1] == nbox_list[i] - 1 and 1 < dis_list[i] < high:
-                roi = cv2.selectROI("1", srcimg, False, False)
+                cross=1
+            # if nbox_list[i] == 2 and dis_list[i] < 25:
+            #     roi = cv2.selectROI("1", srcimg, False, False)
+
         if nbox_list[-1] >= 2:
             nbox_list = []
             dis_list = []
             nbox_list.append(2)
-            dis_list.append(high)
+            dis_list.append(40)
         else:
             nbox_list = []
             dis_list = []
-        return dis_list, nbox_list
+        return dis_list, nbox_list,cross
     else:
-        return dis_list, nbox_list
+        return dis_list, nbox_list,cross
 if __name__ == '__main__':
     import time
 
@@ -209,7 +250,7 @@ if __name__ == '__main__':
     ret, srcimg = cap.read()
     model = yolo_fast_v2(objThreshold=0.3, confThreshold=0.3, nmsThreshold=0.4)
     tracker = Tracker()
-    miss = False
+    cross=0  #0：无交叉情况 1：交叉中 2：交叉前
     dis_list = []
     num_box_list = []
     tmpimg=np.zeros_like(srcimg)
@@ -223,17 +264,23 @@ if __name__ == '__main__':
             roi = cv2.selectROI("1", srcimg, False, False)
             tracker.init(srcimg, roi)
             tmpimg=srcimg[roi[1]:roi[1]+roi[3],roi[0]:roi[0]+roi[2]]
+            tempos=roi
         if (inum + 1) % 1 == 0:
             srcimg, match, distance, num_box,boxs = yolodect(srcimg, roi)
-            boxindex=matchperson(boxs,srcimg,tmpimg)
-            tmpimg=srcimg[boxs[boxindex][1]:boxs[boxindex][1]+boxs[boxindex][3],boxs[boxindex][0]:boxs[boxindex][0]+boxs[boxindex][2]]
-            cv2.rectangle(srcimg,(boxs[boxindex][0],boxs[boxindex][1]),(boxs[boxindex][0]+boxs[boxindex][2],boxs[boxindex][1]+boxs[boxindex][3]),(255,255,0),3)
+            print(cross)
+            if cross==2 or cross==1:
+                pass
+            else:
+                boxindex=matchperson(boxs,srcimg,tmpimg,tempos,cross)
+                tmpimg=srcimg[boxs[boxindex][1]:boxs[boxindex][1]+boxs[boxindex][3],boxs[boxindex][0]:boxs[boxindex][0]+boxs[boxindex][2]]
+                cv2.rectangle(srcimg,(boxs[boxindex][0],boxs[boxindex][1]),(boxs[boxindex][0]+boxs[boxindex][2],boxs[boxindex][1]+boxs[boxindex][3]),(255,255,0),3)
             if inum % 1== 0:
                 dis_list.append(distance)
                 num_box_list.append(num_box)
-                dis_list,num_box_list=overlap(dis_list,num_box_list,35)
+                dis_list,num_box_list,cross=overlap(dis_list,num_box_list,40,cross)
 
         e = time.time()
         cv2.putText(srcimg, 'fps:{}'.format(int(1 / (e - s))), (5, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
         cv2.imshow('1', srcimg)
+        cv2.imshow('t',tmpimg)
         c = cv2.waitKey(1)
