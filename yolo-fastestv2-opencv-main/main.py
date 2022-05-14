@@ -171,7 +171,7 @@ def sim(p1,p2,ip1,ip2):
     '''
     p1=pHash(p1)
     p2=pHash(p2)
-    sim=cmpHash(p1, ip1)*0.7+0.3*cmpHash(p2,ip2)
+    sim=cmpHash(p1, ip1)*0.5+0.5*cmpHash(p2,ip2)
     return  sim
 
 def matchperson(roi,img1,imgmatching,pos,cross):
@@ -197,25 +197,25 @@ def matchperson(roi,img1,imgmatching,pos,cross):
     ip2=pHash(ip2)
     for i in roi:
         if i[2]*i[3]<2048: #过滤面积较小的roi
-            simlist.append(1000)
+            simlist.append(2048)
             continue
+        if i[0]<0:
+            i[0]=0
+        if i[1]<0:
+            i[0]=0
         p=img1[i[1]:i[1]+i[3],i[0]:i[0]+i[2]]
-
-        p = cv2.GaussianBlur(p, (7, 7), 3)
+        if i[2]==0 or i[3]==0:
+            continue
+        #p = cv2.GaussianBlur(p, (7, 7), 3)
         p1,p2=PCB(p)
         dis=math.sqrt(math.pow((pos[0]+pos[2]/2-i[0]-i[2]/2), 2)+math.pow((pos[1]+pos[3]/2-i[1]-i[3]/2), 2))
-        if cross!=0:
-            s=sim(p1,p2,ip1,ip2)+dis*0.03
-        else:
-            s=dis
-        #cv2.imshow('2',p)
-        #cv2.waitKey(0)
+        s=sim(p1,p2,ip1,ip2)+dis*0.03
         simlist.append(s)
     return np.argmin(simlist)
 def overlap(dis_list, nbox_list, high,cross):
     '''
     判断目标是否重叠
-    :param dis_list: 存储bbox距离的list
+    :param dis_list: 存储bbox距离的lis  t
     :param nbox_list: 存储bbox数量的list
     :param high:距离上限阈值
     :return: dis_list,nbox_list
@@ -246,9 +246,9 @@ def overlap(dis_list, nbox_list, high,cross):
 if __name__ == '__main__':
     import time
 
-    cap = cv2.VideoCapture(r'./data/outside1.mp4')
+    cap = cv2.VideoCapture(r'./data/outsideblack.mp4')
     ret, srcimg = cap.read()
-    model = yolo_fast_v2(objThreshold=0.3, confThreshold=0.3, nmsThreshold=0.4)
+    model = yolo_fast_v2(objThreshold=0.4, confThreshold=0.4, nmsThreshold=0.4)
     tracker = Tracker()
     cross=0  #0：无交叉情况 1：交叉中 2：交叉前
     dis_list = []
@@ -257,22 +257,24 @@ if __name__ == '__main__':
     while ret:
         ret, srcimg = cap.read()
         srcimg = cv2.resize(srcimg, (640, 480))
+        srcimg[134:134+70,219:37+219]=np.zeros([70,37,3])
+        copy=srcimg.copy()
         s = time.time()
         inum = cap.get(1)
         if inum == 2:
             # 初始化kcf tracker 和匹配对象
             roi = cv2.selectROI("1", srcimg, False, False)
             tracker.init(srcimg, roi)
-            tmpimg=srcimg[roi[1]:roi[1]+roi[3],roi[0]:roi[0]+roi[2]]
+            tmpimg=copy[roi[1]:roi[1]+roi[3],roi[0]:roi[0]+roi[2]]
             tempos=roi
         if (inum + 1) % 1 == 0:
             srcimg, match, distance, num_box,boxs = yolodect(srcimg, roi)
-            print(cross)
             if cross==2 or cross==1:
                 pass
             else:
-                boxindex=matchperson(boxs,srcimg,tmpimg,tempos,cross)
-                tmpimg=srcimg[boxs[boxindex][1]:boxs[boxindex][1]+boxs[boxindex][3],boxs[boxindex][0]:boxs[boxindex][0]+boxs[boxindex][2]]
+                boxindex=matchperson(boxs,copy,tmpimg,tempos,cross)  #匹配行人，通过当前帧的box和上一帧的roi
+                tempos=boxs[boxindex]
+                tmpimg=copy [boxs[boxindex][1]:boxs[boxindex][1]+boxs[boxindex][3],boxs[boxindex][0]:boxs[boxindex][0]+boxs[boxindex][2]]
                 cv2.rectangle(srcimg,(boxs[boxindex][0],boxs[boxindex][1]),(boxs[boxindex][0]+boxs[boxindex][2],boxs[boxindex][1]+boxs[boxindex][3]),(255,255,0),3)
             if inum % 1== 0:
                 dis_list.append(distance)
@@ -283,4 +285,4 @@ if __name__ == '__main__':
         cv2.putText(srcimg, 'fps:{}'.format(int(1 / (e - s))), (5, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
         cv2.imshow('1', srcimg)
         cv2.imshow('t',tmpimg)
-        c = cv2.waitKey(1)
+        c = cv2.waitKey(0)
